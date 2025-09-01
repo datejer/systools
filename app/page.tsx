@@ -22,6 +22,7 @@ interface GamePrice {
   appId: number
   price: string | null
   currency: string
+  tradingCards: number | null
   status: "pending" | "found" | "not-found" | "error"
 }
 
@@ -51,6 +52,7 @@ export default function GamePriceChecker() {
   const [progress, setProgress] = useState({ current: 0, total: 0 })
   const [error, setError] = useState("")
   const [countdown, setCountdown] = useState(0)
+  const [tradingCardsData, setTradingCardsData] = useState<Record<string, number>>({})
 
   const queueRef = useRef<number[]>([])
   const processingRef = useRef(false)
@@ -58,6 +60,11 @@ export default function GamePriceChecker() {
   // Load Steam apps on component mount
   useEffect(() => {
     fetchSteamApps()
+  }, [])
+
+  // Load trading cards data on component mount
+  useEffect(() => {
+    fetchTradingCardsData()
   }, [])
 
   const fetchSteamApps = async () => {
@@ -75,6 +82,24 @@ export default function GamePriceChecker() {
     } catch (err) {
       console.error("Error fetching Steam apps:", err)
       setError("Failed to fetch Steam app list. Please try again.")
+    }
+  }
+
+  const fetchTradingCardsData = async () => {
+    try {
+      const response = await fetch(
+        "https://raw.githubusercontent.com/nolddor/steam-badges-db/refs/heads/main/data/badges.slim.json",
+      )
+
+      if (!response.ok) {
+        console.warn("Failed to fetch trading cards data:", response.status)
+        return
+      }
+
+      const data = await response.json()
+      setTradingCardsData(data)
+    } catch (err) {
+      console.warn("Error fetching trading cards data:", err)
     }
   }
 
@@ -143,10 +168,15 @@ export default function GamePriceChecker() {
                   ...game,
                   price: cheapestPrice !== null ? cheapestPrice.toFixed(2) : null,
                   currency: priceData.prices.currency,
+                  tradingCards: tradingCardsData[game.appId.toString()] || null,
                   status: "found",
                 }
               } else {
-                return { ...game, status: "not-found" }
+                return {
+                  ...game,
+                  tradingCards: tradingCardsData[game.appId.toString()] || null,
+                  status: "not-found",
+                }
               }
             }
             return game
@@ -181,7 +211,7 @@ export default function GamePriceChecker() {
 
     processingRef.current = false
     setIsProcessing(false)
-  }, [apiKey])
+  }, [apiKey, tradingCardsData])
 
   const startProcessing = async () => {
     if (!apiKey.trim()) {
@@ -214,6 +244,7 @@ export default function GamePriceChecker() {
           appId,
           price: null,
           currency: "USD",
+          tradingCards: tradingCardsData[appId.toString()] || null,
           status: "pending",
         })
         validAppIds.push(appId)
@@ -223,6 +254,7 @@ export default function GamePriceChecker() {
           appId: 0,
           price: null,
           currency: "USD",
+          tradingCards: null,
           status: "not-found",
         })
       }
@@ -245,8 +277,14 @@ export default function GamePriceChecker() {
   }
 
   const generateCSV = () => {
-    const headers = ["Game Name", "Price", "Currency", "Status"]
-    const rows = gameResults.map((game) => [game.name, game.price || "N/A", game.currency, game.status])
+    const headers = ["Game Name", "Price", "Currency", "Trading Cards", "Status"]
+    const rows = gameResults.map((game) => [
+      game.name,
+      game.price || "N/A",
+      game.currency,
+      game.tradingCards?.toString() || "",
+      game.status,
+    ])
 
     const csvContent = [headers, ...rows].map((row) => row.map((cell) => `"${cell}"`).join(",")).join("\n")
 
@@ -340,7 +378,12 @@ export default function GamePriceChecker() {
             </Button>
 
             {isProcessing && (
-              <Button onClick={stopProcessing} variant="outline" className="flex items-center gap-2 bg-transparent">
+              <Button
+                onClick={stopProcessing}
+                variant="outline"
+                size="sm"
+                className="flex items-center gap-2 bg-transparent"
+              >
                 <Square className="w-4 h-4" />
                 Stop
               </Button>
@@ -386,6 +429,7 @@ export default function GamePriceChecker() {
                 <TableRow>
                   <TableHead>Game Name</TableHead>
                   <TableHead>Price</TableHead>
+                  <TableHead>Trading Cards</TableHead>
                   <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
@@ -394,6 +438,7 @@ export default function GamePriceChecker() {
                   <TableRow key={index}>
                     <TableCell className="font-medium">{game.name}</TableCell>
                     <TableCell>{game.price ? `$${game.price} ${game.currency}` : "N/A"}</TableCell>
+                    <TableCell>{game.tradingCards || ""}</TableCell>
                     <TableCell>
                       <Badge
                         variant={

@@ -96,13 +96,12 @@ export default function GamePriceChecker() {
 
   const mapGameNamesToAppIds = async (names: string[]): Promise<MapApiResponse> => {
     try {
-      const response = await fetch("https://bunter.ejer.lol/api/items/map", {
+      const response = await fetch("/api/map-games", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          type: "app",
           names: names,
         }),
       })

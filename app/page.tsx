@@ -12,9 +12,24 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import Link from "next/link"
 import { ArrowRight } from "lucide-react"
 
-interface SteamApp {
-  appid: number
+interface MappedItem {
+  id: number
+  type: string
+  foreign_id: number
+  foreign_type: string | null
   name: string
+  release_date: string | null
+  capsule_image_url: string | null
+  achievements: number | null
+  cards: number | null
+  positive_reviews: number | null
+  negative_reviews: number | null
+  created_at: string
+}
+
+interface MapApiResponse {
+  items: MappedItem[]
+  failedToMap: string[]
 }
 
 interface GamePrice {
@@ -46,7 +61,6 @@ interface GGDealsResponse {
 export default function GamePriceChecker() {
   const [apiKey, setApiKey] = useState("")
   const [gameNames, setGameNames] = useState("")
-  const [steamApps, setSteamApps] = useState<SteamApp[]>([])
   const [gameResults, setGameResults] = useState<GamePrice[]>([])
   const [isProcessing, setIsProcessing] = useState(false)
   const [progress, setProgress] = useState({ current: 0, total: 0 })
@@ -57,33 +71,10 @@ export default function GamePriceChecker() {
   const queueRef = useRef<number[]>([])
   const processingRef = useRef(false)
 
-  // Load Steam apps on component mount
-  useEffect(() => {
-    fetchSteamApps()
-  }, [])
-
   // Load trading cards data on component mount
   useEffect(() => {
     fetchTradingCardsData()
   }, [])
-
-  const fetchSteamApps = async () => {
-    try {
-      const response = await fetch("/api/steam-apps")
-
-      if (!response.ok) {
-        throw new Error(`API responded with status: ${response.status}`)
-      }
-
-      const data = await response.json()
-      const apps = data.applist.apps
-
-      setSteamApps(apps)
-    } catch (err) {
-      console.error("Error fetching Steam apps:", err)
-      setError("Failed to fetch Steam app list. Please try again.")
-    }
-  }
 
   const fetchTradingCardsData = async () => {
     try {
@@ -103,18 +94,29 @@ export default function GamePriceChecker() {
     }
   }
 
-  const findAppId = (gameName: string): number | null => {
-    const normalizedName = gameName.toLowerCase().trim()
-    const exactMatch = steamApps.find((app) => app.name.toLowerCase() === normalizedName)
+  const mapGameNamesToAppIds = async (names: string[]): Promise<MapApiResponse> => {
+    try {
+      const response = await fetch("https://bunter.ejer.lol/api/items/map", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          type: "app",
+          names: names,
+        }),
+      })
 
-    if (exactMatch) return exactMatch.appid
+      if (!response.ok) {
+        throw new Error(`API responded with status: ${response.status}`)
+      }
 
-    // Fuzzy match - find closest match
-    const partialMatch = steamApps.find(
-      (app) => app.name.toLowerCase().includes(normalizedName) || normalizedName.includes(app.name.toLowerCase()),
-    )
-
-    return partialMatch?.appid || null
+      const data: MapApiResponse = await response.json()
+      return data
+    } catch (err) {
+      console.error("Error mapping game names:", err)
+      throw err
+    }
   }
 
   const fetchPricesFromQueue = useCallback(async () => {
@@ -224,50 +226,57 @@ export default function GamePriceChecker() {
       return
     }
 
-    if (steamApps.length === 0) {
-      setError("Steam app list not loaded. Please wait or refresh the page.")
-      return
-    }
-
     setError("")
     setIsProcessing(true)
 
-    const names = gameNames.split("\n").filter((name) => name.trim())
-    const results: GamePrice[] = []
-    const validAppIds: number[] = []
+    const names = gameNames
+      .split("\n")
+      .filter((name) => name.trim())
+      .map((name) => name.trim())
 
-    names.forEach((name) => {
-      const appId = findAppId(name.trim())
-      if (appId) {
+    try {
+      const mappingResult = await mapGameNamesToAppIds(names)
+
+      const results: GamePrice[] = []
+      const validAppIds: number[] = []
+
+      // Process successfully mapped items
+      mappingResult.items.forEach((item) => {
         results.push({
-          name: name.trim(),
-          appId,
+          name: item.name,
+          appId: item.foreign_id,
           price: null,
           currency: "USD",
-          tradingCards: tradingCardsData[appId.toString()] || null,
+          tradingCards: tradingCardsData[item.foreign_id.toString()] || null,
           status: "pending",
         })
-        validAppIds.push(appId)
-      } else {
+        validAppIds.push(item.foreign_id)
+      })
+
+      // Process failed mappings
+      mappingResult.failedToMap.forEach((name) => {
         results.push({
-          name: name.trim(),
+          name: name,
           appId: 0,
           price: null,
           currency: "USD",
           tradingCards: null,
           status: "not-found",
         })
-      }
-    })
+      })
 
-    setGameResults(results)
-    setProgress({ current: 0, total: names.length })
+      setGameResults(results)
+      setProgress({ current: 0, total: names.length })
 
-    // Add valid app IDs to queue
-    queueRef.current = validAppIds
+      // Add valid app IDs to queue
+      queueRef.current = validAppIds
 
-    // Start processing queue
-    fetchPricesFromQueue()
+      // Start processing queue
+      fetchPricesFromQueue()
+    } catch (err) {
+      setError("Failed to map game names. Please try again.")
+      setIsProcessing(false)
+    }
   }
 
   const stopProcessing = () => {
